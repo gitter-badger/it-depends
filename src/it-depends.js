@@ -23,113 +23,103 @@
     var nop = function () { };
     var trackers = [nop];
     var nextId = 0;
+    var dependencyLookup = {};
 
-    function notifyCurrentTracker(descriptor) {
-        trackers[trackers.length - 1](descriptor);
+    function createDependency(id) {
+        dependencyLookup[id] = {
+            needsRecalc: false,
+            dependents: {}
+        };
+    };
+
+    function forEach(values, iterator) {
+        for (var key in values) {
+            if (!values.hasOwnProperty(key))
+                continue;
+
+            iterator(key, values[key]);
+        }
+    };
+
+    function setChanged(id) {
+        var dependency = dependencyLookup[id];
+        if (dependency.needsRecalc) {
+            return;
+        }
+
+        dependency.needsRecalc = true;
+
+        forEach(dependency.dependents, setChanged);
+
+        dependency.dependents = {};
+    };
+
+    function notifyCurrentTracker(id) {
+        trackers[trackers.length - 1](id);
     };
 
     exports.value = function (initialValue) {
         var currentValue = initialValue;
+        var id = ++nextId;
+        createDependency(id);
 
         var self = function () {
-            notifyCurrentTracker(descriptor);
+            notifyCurrentTracker(id);
             return currentValue;
         };
-		
-		self.write = function (newValue){
+
+        self.write = function (newValue) {
             if (currentValue !== newValue) {
                 currentValue = newValue;
-                descriptor.valueVersion++;
+                setChanged(id);
+                dependencyLookup[id].needsRecalc = false;
             }
-		};
-
-		var descriptor = {
-			changedSince: function (version) {
-				return descriptor.valueVersion > version;
-			},
-			valueVersion: 0,
-			id: ++nextId
-		};
+        };
 
         return self;
     };
 
     exports.computed = function (calculator) {
-        var currentValue;
         var dependencies;
-
-        var setValue = function (newValue) {
-            if (currentValue !== newValue) {
-                currentValue = newValue;
-                descriptor.valueVersion++;
-            }
-        };
-
-        var atLeastOneDependencyChanged = function (visitor) {
-            for (var dependencyId in dependencies) {
-                if (!dependencies.hasOwnProperty(dependencyId))
-                    continue;
-
-                var dependency = dependencies[dependencyId];
-
-                if (dependency.descriptor.changedSince(dependency.capturedVersion, visitor)) {
-                    return true;
-                }
-            }
-
-            return false;
-        };
-
-        var needRecalcCache = false;
-        var needRecalc = function (visitor) {
-            return needRecalcCache ||
-            (needRecalcCache = !dependencies || atLeastOneDependencyChanged(visitor));
-        };
+        var currentValue;
+        var id = ++nextId;
+        createDependency(id);
+        dependencyLookup[id].needsRecalc = true;
 
         var self = function () {
-            if (needRecalc({})) {
-                needRecalcCache = false;
+            var dependency = dependencyLookup[id];
+            if (dependency.needsRecalc) {
+                dependency.needsRecalc = false;
+
+                if (dependencies) {
+                    forEach(dependencies, function(dependencyId) {
+                        if (dependencies.hasOwnProperty[dependencyId]) {
+                            delete dependencyLookup[dependencyId].dependents[id];
+                        }
+                    });
+                }
+
                 dependencies = {};
 
-                trackers.push(function (dependencyDescriptor) {
-                    if (dependencies[dependencyDescriptor.id])
+                trackers.push(function (dependencyId) {
+                    if (dependencies.hasOwnProperty[dependencyId])
                         return;
 
-                    dependencies[dependencyDescriptor.id] ={
-                        descriptor: dependencyDescriptor,
-                        capturedVersion: dependencyDescriptor.valueVersion
-                    };
+                    dependencies[dependencyId] = true;
+                    dependencyLookup[dependencyId].dependents[id] = true;
                 });
 
                 try {
-                    setValue(calculator());
+                    currentValue = calculator();
                 } finally {
                     trackers.pop();
                 }
             }
 
-            notifyCurrentTracker(descriptor);
+            notifyCurrentTracker(id);
 
             return currentValue;
         };
-
-		var descriptor = {
-			changedSince: function (version, visitor) {
-				if (visitor[descriptor.id]) {
-					return false;
-				}
-
-				visitor[descriptor.id] = true;
-
-				if (descriptor.valueVersion > version) {
-					return true;
-				}
-
-				return needRecalc(visitor);
-			},
-			valueVersion: 0,
-			id: ++nextId
-		};
 
         return self;
     };
